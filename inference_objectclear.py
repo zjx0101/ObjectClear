@@ -10,7 +10,12 @@ import numpy as np
 
 
 if __name__ == '__main__':
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
     parser = argparse.ArgumentParser()
 
     parser.add_argument('-i', '--input_path', type=str, default='./inputs/imgs', 
@@ -63,7 +68,7 @@ if __name__ == '__main__':
     # ------------------ set up ObjectClear pipeline -------------------
     torch_dtype = torch.float16 if args.use_fp16 else torch.float32
     variant = "fp16" if args.use_fp16 else None
-    generator = torch.Generator(device=device).manual_seed(args.seed)
+    generator = torch.Generator(device='cpu').manual_seed(args.seed)
     use_agf = not args.no_agf
     pipe = ObjectClearPipeline.from_pretrained_with_custom_modules(
         "jixin0101/ObjectClear",
