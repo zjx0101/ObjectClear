@@ -50,7 +50,7 @@ For more visual results, go checkout our <a href="https://zjx0101.github.io/proj
 
 
 ## ⭐ Update
-- [2026.02] **🔥 Training code is now released!** See the [Training](#-training) section below.
+- [2026.08] **🔥 Training code is now released!** See the [Training](#-training) section below.
 - [2026.02] **🔥 OBER Dataset is Now Released!** Our training dataset is now publicly available on [Hugging Face](https://huggingface.co/datasets/sczhou/OBERDataset_ObjectClear) 🤗.
 - [2025.09] We have released our [benchmark datasets](https://drive.google.com/drive/folders/12LA53ZPAG1uxdVXsn90L2qe6zCcp6aGF?usp=sharing) for evaluation, along with [our results](https://drive.google.com/drive/folders/1eUbIz5OS9yK6Ih8Y1qXoXuk_UWOcifcY?usp=sharing) to facilitate comparison.
 - [2025.07] Release the inference code and Gradio demo.
