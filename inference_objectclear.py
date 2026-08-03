@@ -5,7 +5,6 @@ import torch
 from objectclear.pipelines import ObjectClearPipeline
 from objectclear.utils import resize_by_short_side
 from PIL import Image
-import numpy as np
 
 
 
@@ -19,7 +18,8 @@ if __name__ == '__main__':
                         help='Input mask image or folder. Default: inputs/masks')
     parser.add_argument('-o', '--output_path', type=str, default=None, 
                         help='Output folder. Default: results/<input_name>')
-    parser.add_argument('--cache_dir', type=str, default=None,
+    parser.add_argument('--cache_dir', type=str,
+                        default=os.environ.get('HF_HOME', None),
                         help="Path to cache directory")
     parser.add_argument('--use_fp16', action='store_true', 
                         help='Use float16 for inference')
@@ -63,7 +63,6 @@ if __name__ == '__main__':
     # ------------------ set up ObjectClear pipeline -------------------
     torch_dtype = torch.float16 if args.use_fp16 else torch.float32
     variant = "fp16" if args.use_fp16 else None
-    generator = torch.Generator(device=device).manual_seed(args.seed)
     use_agf = not args.no_agf
     pipe = ObjectClearPipeline.from_pretrained_with_custom_modules(
         "jixin0101/ObjectClear",
@@ -78,7 +77,7 @@ if __name__ == '__main__':
     # -------------------- start to processing ---------------------
     for i, (img_path, mask_path) in enumerate(zip(input_img_list, input_mask_list)):
         img_name = os.path.basename(img_path)
-        basename, ext = os.path.splitext(img_name)
+        basename, _ = os.path.splitext(img_name)
         print(f'[{i+1}/{test_img_num}] Processing: {img_name}')
         
         image = Image.open(img_path).convert("RGB")
@@ -91,7 +90,9 @@ if __name__ == '__main__':
         mask = resize_by_short_side(mask, 512, resample=Image.NEAREST)
         
         w, h = image.size
-    
+
+        generator = torch.Generator(device=device).manual_seed(args.seed)
+
         result = pipe(
             prompt="remove the instance of object",
             image=image,

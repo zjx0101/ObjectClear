@@ -50,15 +50,17 @@ For more visual results, go checkout our <a href="https://zjx0101.github.io/proj
 
 
 ## ⭐ Update
+- [2026.02] **🔥 Training code is now released!** See the [Training](#-training) section below.
 - [2026.02] **🔥 OBER Dataset is Now Released!** Our training dataset is now publicly available on [Hugging Face](https://huggingface.co/datasets/sczhou/OBERDataset_ObjectClear) 🤗.
 - [2025.09] We have released our [benchmark datasets](https://drive.google.com/drive/folders/12LA53ZPAG1uxdVXsn90L2qe6zCcp6aGF?usp=sharing) for evaluation, along with [our results](https://drive.google.com/drive/folders/1eUbIz5OS9yK6Ih8Y1qXoXuk_UWOcifcY?usp=sharing) to facilitate comparison.
 - [2025.07] Release the inference code and Gradio demo.
 - [2025.05] This repo is created.
 
 ### ✅ TODO
+- [x] Release the training code
 - [x] Release our training datasets
 - [x] Release our benchmark datasets
-- [x] ~~Release the inference code and Gradio demo~~
+- [x] Release the inference code and Gradio demo
 
 
 ## 🎃 Overview
@@ -123,6 +125,85 @@ python inference_objectclear.py -i inputs/imgs -m inputs/masks --guidance_scale 
 
 > **Note:** `--guidance_scale` controls the trade-off: higher values lead to stronger removal, while lower values better preserve background details.  
 > The default setting is `--guidance_scale 2.5`. For all [benchmark results](https://drive.google.com/drive/folders/1eUbIz5OS9yK6Ih8Y1qXoXuk_UWOcifcY?usp=sharing) reported in our paper, we used `--guidance_scale 1.0`.
+
+
+## 🚀 Training
+
+### 1. Prepare the pretrained weights
+ObjectClear is built on [SDXL-Inpainting](https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1) and uses a [CLIP image encoder](https://huggingface.co/openai/clip-vit-large-patch14) to encode the target object. The SDXL base model is downloaded automatically on the first run. Download the CLIP image encoder into `./ckpts`:
+
+```shell
+# download the CLIP image encoder used as the object encoder
+huggingface-cli download openai/clip-vit-large-patch14 --local-dir ./ckpts/clip-vit-large-patch14
+```
+
+### 2. Prepare the OBER dataset
+The training reads the OBER parquet shards directly (no unpacking needed). Access to the dataset is gated — first request access on the [dataset page](https://huggingface.co/datasets/sczhou/OBERDataset_ObjectClear), then log in and download:
+
+```shell
+# log in with your Hugging Face token (needed for the gated dataset)
+huggingface-cli login
+
+# download the OBER dataset (~27 GB) into ./data/OBER
+huggingface-cli download sczhou/OBERDataset_ObjectClear --repo-type dataset --local-dir ./data/OBER
+```
+
+After downloading, the parquet shards live in `./data/OBER/data`:
+```
+data/OBER/data
+   ├─ train-00000-of-00053.parquet   # 37,994 cropped training pairs
+   ├─ ...
+   ├─ train-00052-of-00053.parquet
+   └─ test-00000-of-00001.parquet    # test split (used for validation)
+```
+Each sample provides `input`, `gt`, `object_mask`, and `object_effect_mask`.
+
+### 3. Start training
+We provide a ready-to-run script [`train.sh`](./train.sh) for multi-GPU training with 🤗 `accelerate`. Edit the paths / hyper-parameters at the top of the script, then run:
+
+```shell
+bash train.sh
+```
+
+Or launch directly with `accelerate` (8 GPUs example):
+```shell
+accelerate launch --multi_gpu --num_processes 8 --mixed_precision fp16 \
+    train_objectclear.py \
+    --pretrained_model_name_or_path "diffusers/stable-diffusion-xl-1.0-inpainting-0.1" \
+    --image_encoder_name_or_path "./ckpts/clip-vit-large-patch14" \
+    --output_dir "./runs/train_objectclear" \
+    --image_dir1 "./data/OBER/data" \
+    --resolution 512 \
+    --train_batch_size 4 \
+    --learning_rate 1e-05 \
+    --learning_rate_attn 1e-05 \
+    --lr_scheduler cosine \
+    --max_train_steps 100000 \
+    --checkpointing_steps 5000 \
+    --checkpoints_total_limit 5 \
+    --color_augmentation \
+    --flip_augmentation \
+    --random_mask_dilation \
+    --random_mask_erosion \
+    --object_localization \
+    --object_localization_weight 0.01 \
+    --background_loss_weight 1 \
+    --real_only \
+    --seed 42
+```
+
+### 4. Validation during training
+To monitor training, enable validation on the OBER test split. Validation runs the full [`ObjectClearPipeline`](./objectclear/pipelines) (identical to inference) and reports PSNR on samples with ground truth:
+
+```shell
+    --validation_parquet "./data/OBER/data/test-00000-of-00001.parquet" \
+    --validation_subset "OBER-Test" \
+    --validation_num_samples 8 \
+    --validate_by_iter \
+    --validation_iterations 2000
+```
+
+> **Note:** `--validation_subset` can be `OBER-Test` or `RORD-Val-343` (both have ground truth, so PSNR is computed) or `OBER-Wild` (no ground truth). Validation images, attention maps, and metrics are written to `<output_dir>/validation_results/`.
 
 
 ## 📊 Evaluation with ReMOVE+

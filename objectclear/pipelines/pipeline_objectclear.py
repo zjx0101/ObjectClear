@@ -123,140 +123,6 @@ def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
     return noise_cfg
 
 
-def mask_pil_to_torch(mask, height, width):
-    # preprocess mask
-    if isinstance(mask, (PIL.Image.Image, np.ndarray)):
-        mask = [mask]
-
-    if isinstance(mask, list) and isinstance(mask[0], PIL.Image.Image):
-        mask = [i.resize((width, height), resample=PIL.Image.LANCZOS) for i in mask]
-        mask = np.concatenate([np.array(m.convert("L"))[None, None, :] for m in mask], axis=0)
-        mask = mask.astype(np.float32) / 255.0
-    elif isinstance(mask, list) and isinstance(mask[0], np.ndarray):
-        mask = np.concatenate([m[None, None, :] for m in mask], axis=0)
-
-    mask = torch.from_numpy(mask)
-    return mask
-
-
-def prepare_mask_and_masked_image(image, mask, height, width, return_image: bool = False):
-    """
-    Prepares a pair (image, mask) to be consumed by the Stable Diffusion pipeline. This means that those inputs will be
-    converted to ``torch.Tensor`` with shapes ``batch x channels x height x width`` where ``channels`` is ``3`` for the
-    ``image`` and ``1`` for the ``mask``.
-
-    The ``image`` will be converted to ``torch.float32`` and normalized to be in ``[-1, 1]``. The ``mask`` will be
-    binarized (``mask > 0.5``) and cast to ``torch.float32`` too.
-
-    Args:
-        image (Union[np.array, PIL.Image, torch.Tensor]): The image to inpaint.
-            It can be a ``PIL.Image``, or a ``height x width x 3`` ``np.array`` or a ``channels x height x width``
-            ``torch.Tensor`` or a ``batch x channels x height x width`` ``torch.Tensor``.
-        mask (_type_): The mask to apply to the image, i.e. regions to inpaint.
-            It can be a ``PIL.Image``, or a ``height x width`` ``np.array`` or a ``1 x height x width``
-            ``torch.Tensor`` or a ``batch x 1 x height x width`` ``torch.Tensor``.
-
-
-    Raises:
-        ValueError: ``torch.Tensor`` images should be in the ``[-1, 1]`` range. ValueError: ``torch.Tensor`` mask
-        should be in the ``[0, 1]`` range. ValueError: ``mask`` and ``image`` should have the same spatial dimensions.
-        TypeError: ``mask`` is a ``torch.Tensor`` but ``image`` is not
-            (ot the other way around).
-
-    Returns:
-        tuple[torch.Tensor]: The pair (mask, masked_image) as ``torch.Tensor`` with 4
-            dimensions: ``batch x channels x height x width``.
-    """
-
-    # checkpoint. TOD(Yiyi) - need to clean this up later
-    deprecation_message = "The prepare_mask_and_masked_image method is deprecated and will be removed in a future version. Please use VaeImageProcessor.preprocess instead"
-    deprecate(
-        "prepare_mask_and_masked_image",
-        "0.30.0",
-        deprecation_message,
-    )
-    if image is None:
-        raise ValueError("`image` input cannot be undefined.")
-
-    if mask is None:
-        raise ValueError("`mask_image` input cannot be undefined.")
-
-    if isinstance(image, torch.Tensor):
-        if not isinstance(mask, torch.Tensor):
-            mask = mask_pil_to_torch(mask, height, width)
-
-        if image.ndim == 3:
-            image = image.unsqueeze(0)
-
-        # Batch and add channel dim for single mask
-        if mask.ndim == 2:
-            mask = mask.unsqueeze(0).unsqueeze(0)
-
-        # Batch single mask or add channel dim
-        if mask.ndim == 3:
-            # Single batched mask, no channel dim or single mask not batched but channel dim
-            if mask.shape[0] == 1:
-                mask = mask.unsqueeze(0)
-
-            # Batched masks no channel dim
-            else:
-                mask = mask.unsqueeze(1)
-
-        assert image.ndim == 4 and mask.ndim == 4, "Image and Mask must have 4 dimensions"
-        # assert image.shape[-2:] == mask.shape[-2:], "Image and Mask must have the same spatial dimensions"
-        assert image.shape[0] == mask.shape[0], "Image and Mask must have the same batch size"
-
-        # Check image is in [-1, 1]
-        # if image.min() < -1 or image.max() > 1:
-        #    raise ValueError("Image should be in [-1, 1] range")
-
-        # Check mask is in [0, 1]
-        if mask.min() < 0 or mask.max() > 1:
-            raise ValueError("Mask should be in [0, 1] range")
-
-        # Binarize mask
-        mask[mask < 0.5] = 0
-        mask[mask >= 0.5] = 1
-
-        # Image as float32
-        image = image.to(dtype=torch.float32)
-    elif isinstance(mask, torch.Tensor):
-        raise TypeError(f"`mask` is a torch.Tensor but `image` (type: {type(image)} is not")
-    else:
-        # preprocess image
-        if isinstance(image, (PIL.Image.Image, np.ndarray)):
-            image = [image]
-        if isinstance(image, list) and isinstance(image[0], PIL.Image.Image):
-            # resize all images w.r.t passed height an width
-            image = [i.resize((width, height), resample=PIL.Image.LANCZOS) for i in image]
-            image = [np.array(i.convert("RGB"))[None, :] for i in image]
-            image = np.concatenate(image, axis=0)
-        elif isinstance(image, list) and isinstance(image[0], np.ndarray):
-            image = np.concatenate([i[None, :] for i in image], axis=0)
-
-        image = image.transpose(0, 3, 1, 2)
-        image = torch.from_numpy(image).to(dtype=torch.float32) / 127.5 - 1.0
-
-        mask = mask_pil_to_torch(mask, height, width)
-        mask[mask < 0.5] = 0
-        mask[mask >= 0.5] = 1
-
-    if image.shape[1] == 4:
-        # images are in latent space and thus can't
-        # be masked set masked_image to None
-        # we assume that the checkpoint is not an inpainting
-        # checkpoint. TOD(Yiyi) - need to clean this up later
-        masked_image = None
-    else:
-        masked_image = image * (mask < 0.5)
-
-    # n.b. ensure backwards compatibility as old function does not return image
-    if return_image:
-        return mask, masked_image, image
-
-    return mask, masked_image
-
-
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
 def retrieve_latents(
     encoder_output: torch.Tensor, generator: Optional[torch.Generator] = None, sample_mode: str = "sample"
@@ -462,10 +328,12 @@ class ObjectClearPipeline(
             self.watermark = StableDiffusionXLWatermarker()
         else:
             self.watermark = None
-        
-        if self.config.apply_attention_guided_fusion:
-            self.cross_attention_scores = {}
-            self.original_state = None
+
+        # These buffers back the cross-attention capture. Capture can be triggered
+        # either by AGF or by return_attn_map (see __call__), so always initialise
+        # them rather than gating on apply_attention_guided_fusion.
+        self.cross_attention_scores = {}
+        self.original_state = None
 
 
     @classmethod
@@ -478,30 +346,41 @@ class ObjectClearPipeline(
         **kwargs,
     ):
         from safetensors.torch import load_file
-        from huggingface_hub import hf_hub_download
+        from huggingface_hub import snapshot_download
+
+        # Use the path directly if it is a local directory; otherwise download the
+        # whole repo snapshot once and load every component from the local path,
+        # which avoids issuing multiple overlapping requests to the same repo.
+        # Note: the repo ships both fp32 (*.safetensors) and fp16
+        # (*.fp16.safetensors) weights, so filter by variant to avoid downloading
+        # the unneeded set (~8-16G).
+        if os.path.isdir(pretrained_model_name_or_path):
+            local_path = pretrained_model_name_or_path
+        else:
+            if variant == "fp16":
+                ignore_patterns = ["*model.safetensors", "*model.bin"]
+            else:
+                ignore_patterns = ["*.fp16.safetensors", "*.fp16.bin"]
+            local_path = snapshot_download(
+                repo_id=pretrained_model_name_or_path,
+                cache_dir=cache_dir,
+                ignore_patterns=ignore_patterns,
+            )
 
         image_prompt_encoder = CLIPImageEncoder.from_pretrained(
-            pretrained_model_name_or_path,
+            local_path,
             cache_dir=cache_dir,
+            variant=variant,
         )
 
         postfuse_module = PostfuseModule(embed_dim=2048, embed_dim_img=768)
-        sub_folder = "postfuse_module"
-        filename = "model.safetensors"
-        if pretrained_model_name_or_path == "jixin0101/ObjectClear":
-            safetensor_path = hf_hub_download(
-                repo_id="jixin0101/ObjectClear",      
-                filename=filename,
-                subfolder="postfuse_module",            
-                cache_dir=cache_dir                     
-            )
-        else:
-            safetensor_path = os.path.join(pretrained_model_name_or_path, sub_folder, filename)
+        postfuse_weight = "model.fp16.safetensors" if variant == "fp16" else "model.safetensors"
+        safetensor_path = os.path.join(local_path, "postfuse_module", postfuse_weight)
         state_dict_postfuse = load_file(safetensor_path)
         postfuse_module.load_state_dict(state_dict_postfuse)
-        
+
         pipe = super().from_pretrained(
-            pretrained_model_name_or_path,
+            local_path,
             torch_dtype=torch_dtype,
             image_prompt_encoder=image_prompt_encoder,
             postfuse_module=postfuse_module,
@@ -509,7 +388,7 @@ class ObjectClearPipeline(
             variant=variant,
             **kwargs,
         )
-        
+
         if torch_dtype is not None:
             pipe.to(dtype=torch_dtype)
 
@@ -1878,10 +1757,12 @@ class ObjectClearPipeline(
             for i, t in enumerate(timesteps):
                 if self.interrupt:
                     continue
-                # Inject cross-attention storage logic at the last timestep
-                if i == len(timesteps) - 1 and self.config.apply_attention_guided_fusion:
+                # Inject cross-attention storage logic at the last timestep.
+                # Capture is needed both for AGF fusion and when the caller only
+                # wants the attention map back (return_attn_map), so decouple the two.
+                if i == len(timesteps) - 1 and (self.config.apply_attention_guided_fusion or return_attn_map):
                     self.unet, self.original_state = self.unet_store_cross_attention_scores(
-                        self.unet, 
+                        self.unet,
                         self.cross_attention_scores
                     )
                 # expand the latents if we are doing classifier free guidance
@@ -1926,8 +1807,10 @@ class ObjectClearPipeline(
 
                 # progressive attention mask blending
                 fuse_index = 5
-                if self.config.apply_attention_guided_fusion:
-                    if i == 0:
+                if self.config.apply_attention_guided_fusion or return_attn_map:
+                    # The i==0 latent blending is AGF-specific behaviour; it must not
+                    # run when we only want the attention map back (AGF off).
+                    if self.config.apply_attention_guided_fusion and i == 0:
                         init_latents_proper = image_latents
                         init_mask = mask[0:1]
 
@@ -1935,10 +1818,13 @@ class ObjectClearPipeline(
                         init_latents_proper = self.scheduler.add_noise(
                             init_latents_proper, noise, torch.tensor([noise_timestep])
                         )
-                        
+
                         latents = (1 - init_mask) * init_latents_proper + init_mask * latents
-                        
-                    if i == len(timesteps) - 1 and self.config.apply_attention_guided_fusion:
+
+                    # Extract the attention map at the last step. This only reads the
+                    # stored cross-attention scores (does not modify latents), so it is
+                    # safe to run with AGF off when return_attn_map is requested.
+                    if i == len(timesteps) - 1:
                         attn_key, attn_map = next(iter(self.cross_attention_scores.items()))
                         attn_map = self.resize_attn_map_divide2(attn_map, mask, fuse_index)
                         init_latents_proper = image_latents
@@ -1949,7 +1835,7 @@ class ObjectClearPipeline(
                         attn_map = init_mask
 
                         self.unet = self.unet_restore_attention_processor(
-                            self.unet, 
+                            self.unet,
                             self.original_state
                         )
 
@@ -2048,23 +1934,28 @@ class ObjectClearPipeline(
                 attn_np = attn_map[i].mean(dim=0).cpu().numpy() * 255.
                 attn_pil = PIL.Image.fromarray(attn_np.astype(np.uint8)).convert("L")
                 attn_pils.append(attn_pil)
-            
-            original_pils = self.image_processor.postprocess(init_image, output_type="pil")
 
-            generated_pils = image
+            # The attention-guided fusion (which replaces the raw diffusion output
+            # with the blended image) only runs when AGF is enabled. When AGF is off
+            # but return_attn_map is set, we keep the raw output and still return the
+            # attention maps above.
+            if self.config.apply_attention_guided_fusion:
+                original_pils = self.image_processor.postprocess(init_image, output_type="pil")
 
-            fused_images = []
-            for i in range(len(generated_pils)):
-                ori_pil = original_pils[i]
-                gen_pil = generated_pils[i]
-                attn_pil = attn_pils[i]
+                generated_pils = image
 
-                fused_np = attention_guided_fusion(np.array(ori_pil), np.array(gen_pil), np.array(attn_pil))
-                fused_pil = PIL.Image.fromarray(fused_np.astype(np.uint8)).resize(ori_pil.size)
+                fused_images = []
+                for i in range(len(generated_pils)):
+                    ori_pil = original_pils[i]
+                    gen_pil = generated_pils[i]
+                    attn_pil = attn_pils[i]
 
-                fused_images.append(fused_pil)
+                    fused_np = attention_guided_fusion(np.array(ori_pil), np.array(gen_pil), np.array(attn_pil))
+                    fused_pil = PIL.Image.fromarray(fused_np.astype(np.uint8)).resize(ori_pil.size)
 
-            image = fused_images
+                    fused_images.append(fused_pil)
+
+                image = fused_images
 
         # Offload all models
         self.maybe_free_model_hooks()

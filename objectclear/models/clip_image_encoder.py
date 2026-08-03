@@ -10,12 +10,19 @@ class CLIPImageEncoder(CLIPPreTrainedModel):
     @staticmethod
     def from_pretrained(
         global_model_name_or_path,
-        cache_dir
+        cache_dir,
+        variant=None,
+        subfolder="image_prompt_encoder",
     ):
+        # Inference loads from the ObjectClear checkpoint's ``image_prompt_encoder``
+        # subfolder (the default). Training initialises from a plain CLIP repo such
+        # as ``openai/clip-vit-large-patch14``, which has no subfolder — pass
+        # ``subfolder=""`` (or None) in that case.
         model = CLIPModel.from_pretrained(
             global_model_name_or_path,
-            subfolder="image_prompt_encoder", 
-            cache_dir=cache_dir
+            subfolder=subfolder or "",
+            cache_dir=cache_dir,
+            variant=variant,
         )
         vision_model = model.vision_model
         visual_projection = model.visual_projection

@@ -7,3 +7,10 @@ pillow
 transformers
 scipy
 diffusers
+safetensors
+huggingface_hub
+pyarrow
+pyyaml
+tensorboard
+tqdm
+packaging
